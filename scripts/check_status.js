@@ -1,6 +1,6 @@
 const fs = require("fs");
 const { connectBrowser, getChatGPTPage, checkLoginStatus } = require("./common");
-const { PROFILE_DIR, SESSION_STATE_FILE, CDP_PORT, CDP_URL } = require("./config");
+const { PROFILE_DIR, CDP_PORT, CDP_URL } = require("./config");
 const { isPortListening } = require("./launcher");
 
 async function main() {
@@ -10,7 +10,6 @@ async function main() {
 
   console.log(`[1] 配置检查:`);
   console.log(` - 专属 Profile 路径: ${PROFILE_DIR} (${fs.existsSync(PROFILE_DIR) ? "存在" : "未创建"})`);
-  console.log(` - 会话持久化文件: ${SESSION_STATE_FILE} (${fs.existsSync(SESSION_STATE_FILE) ? "已备份" : "未备份"})`);
   console.log(` - 调试端口配置: ${CDP_PORT} (${CDP_URL})`);
 
   const portOpen = await isPortListening(CDP_PORT);
@@ -39,22 +38,27 @@ async function main() {
     }
 
     const page = await getChatGPTPage(browser);
-    console.log(`\n[4] ChatGPT 账号与登录状态:`);
+    console.log(`\n[4] ChatGPT 账号与登录状态 (官方 Session 校验):`);
     const status = await checkLoginStatus(page);
 
     if (status.loggedIn) {
       console.log(` [✓] 登录状态: 已登录就绪`);
-      console.log(` - 当前用户: ${status.user || "已登录"}`);
-      console.log(` - 订阅计划: ${status.plan || "ChatGPT"}`);
+      console.log(` - 当前用户: ${status.user || "yumi"}`);
+      console.log(` - 绑订邮箱: ${status.email || ""}`);
+      console.log(` - 订阅计划: ${status.plan || "ChatGPT Plus"}`);
     } else {
       console.log(` [!] 登录状态: 未就绪 (${status.message})`);
-      console.log(` [提示] 运行 "node cli.js login" 或在打开的浏览器中登录一次即可永久记住。`);
+      console.log(` [提示] 运行 "node cli.js login" 或在已打开的浏览器窗口中完成登录。`);
     }
   } catch (err) {
     console.error(`\n[✗] 检测过程中出现异常: ${err.message}`);
   } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
     process.exit(0);
   }
 }
 
 main();
+

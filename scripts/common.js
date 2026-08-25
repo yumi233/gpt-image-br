@@ -5,11 +5,9 @@ const {
   CDP_URL,
   CDP_PORT,
   CHATGPT_URL,
-  PROFILE_DIR,
-  SESSION_STATE_FILE
+  PROFILE_DIR
 } = require("./config");
 const { ensureBrowserRunning } = require("./launcher");
-const { saveSessionState, restoreSessionState, extractUserInfo } = require("./session");
 
 /**
  * 连接 Chrome/Edge 调试端口，若未运行可自动启动
@@ -51,10 +49,6 @@ async function getChatGPTPage(browser) {
   }
 
   const context = contexts[0];
-
-  // 尝试恢复会话状态
-  await restoreSessionState(context, SESSION_STATE_FILE);
-
   const pages = context.pages();
   let page = pages.find((p) => {
     const url = p.url();
@@ -85,19 +79,19 @@ async function getChatGPTPage(browser) {
 }
 
 /**
- * 诊断当前页面的 ChatGPT 登录与人机验证状态
+ * 通过官方 Session API 精准诊断 ChatGPT 账号、登录态与会员等级
  */
 async function checkLoginStatus(page) {
   try {
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(600);
     const url = page.url();
 
-    // 1. 处于第三方登录或验证页面
+    // 1. 处于第三方登录或验证跳转页面
     if (url.includes("accounts.google.com") || url.includes("auth.openai.com") || url.includes("/auth/")) {
       return {
         loggedIn: false,
         status: "need_login",
-        message: "检测到正在进行 Google / OpenAI 登录或两步验证，请在浏览器中完成验证。"
+        message: "检测到正在进行 Google / OpenAI 登录或两步验证，请在浏览器中完成操作。"
       };
     }
 
@@ -116,7 +110,45 @@ async function checkLoginStatus(page) {
       };
     }
 
-    // 3. 显式登录按钮
+    // 3. 通过 ChatGPT 官方内部 Session API 进行 100% 精准校验
+    const sessionResult = await page.evaluate(async () => {
+      try {
+        const res = await fetch("/api/auth/session", { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.user && data.user.email) {
+            let plan = "ChatGPT Free";
+            if (data.account && data.account.planType) {
+              const pt = data.account.planType.toLowerCase();
+              if (pt === "plus") plan = "ChatGPT Plus";
+              else if (pt === "pro") plan = "ChatGPT Pro";
+              else if (pt === "team") plan = "ChatGPT Team";
+              else plan = `ChatGPT ${data.account.planType}`;
+            }
+            return {
+              ok: true,
+              user: data.user.name || data.user.email,
+              email: data.user.email,
+              plan: plan
+            };
+          }
+        }
+      } catch {}
+      return { ok: false };
+    });
+
+    if (sessionResult && sessionResult.ok) {
+      return {
+        loggedIn: true,
+        status: "ready",
+        user: sessionResult.user,
+        email: sessionResult.email,
+        plan: sessionResult.plan,
+        message: `ChatGPT 已就绪 (用户: ${sessionResult.user}, 邮箱: ${sessionResult.email}, 会员: ${sessionResult.plan})`
+      };
+    }
+
+    // 4. 显式登录按钮
     const loginBtn = await page.$(
       'button[data-testid="login-button"], a[href*="/auth/login"], button:has-text("Log in"), button:has-text("登录"), button:has-text("Sign in")'
     );
@@ -124,47 +156,26 @@ async function checkLoginStatus(page) {
       return {
         loggedIn: false,
         status: "need_login",
-        message: "ChatGPT 尚未登录，请在已打开的浏览器中登录账号。"
+        message: "ChatGPT 尚未登录，请在打开的浏览器中登录账号。"
       };
     }
 
-    // 4. 检查已登录核心特征（输入框或个人信息头像）
+    // 5. 兜底检查输入框
     const input = await locatePromptInput(page);
-    const hasAvatar = await page.$(
-      'button[data-testid="profile-button"], div[data-testid="user-profile-menu"], button[aria-label*="profile"], button[aria-label*="个人资料"]'
-    );
-
-    if (input || hasAvatar) {
-      const userInfo = await extractUserInfo(page);
+    if (input) {
       return {
         loggedIn: true,
         status: "ready",
-        user: userInfo.name,
-        plan: userInfo.plan,
-        message: `ChatGPT 已就绪 (用户: ${userInfo.name}, 会员: ${userInfo.plan})`
+        user: "已登录用户",
+        plan: "ChatGPT Account",
+        message: "ChatGPT 页面已就绪。"
       };
-    }
-
-    if (url.includes("chatgpt.com")) {
-      // 页面正在加载或渲染
-      await page.waitForTimeout(1500);
-      const retryInput = await locatePromptInput(page);
-      if (retryInput) {
-        const userInfo = await extractUserInfo(page);
-        return {
-          loggedIn: true,
-          status: "ready",
-          user: userInfo.name,
-          plan: userInfo.plan,
-          message: `ChatGPT 已就绪 (用户: ${userInfo.name}, 会员: ${userInfo.plan})`
-        };
-      }
     }
 
     return {
       loggedIn: false,
       status: "need_login",
-      message: "未检测到已登录的输入框或会话界面，请在浏览器中确认登录。"
+      message: "未检测到已登录的会话，请在浏览器中确认登录。"
     };
   } catch (err) {
     return {
@@ -176,7 +187,7 @@ async function checkLoginStatus(page) {
 }
 
 /**
- * 等待用户在浏览器中完成登录并自动保存会话
+ * 等待用户在浏览器中完成登录
  */
 async function waitForLogin(page, timeoutMs = 180000) {
   console.log("[登录助手] 正在等待登录完成（最长等待 3 分钟）...");
@@ -186,8 +197,6 @@ async function waitForLogin(page, timeoutMs = 180000) {
     const status = await checkLoginStatus(page);
     if (status.loggedIn) {
       console.log(`\n[登录助手] 登录成功！${status.message}`);
-      const context = page.context();
-      await saveSessionState(context, SESSION_STATE_FILE);
       return status;
     }
 
@@ -357,10 +366,6 @@ module.exports = {
   uploadImages,
   fillAndSendPrompt,
   startNewChat,
-  saveSessionState,
-  restoreSessionState,
-  extractUserInfo,
   CDP_URL,
-  PROFILE_DIR,
-  SESSION_STATE_FILE
+  PROFILE_DIR
 };

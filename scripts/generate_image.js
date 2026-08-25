@@ -255,7 +255,7 @@ async function main() {
     const stats = fs.statSync(finalFilePath);
     console.log(`[✓] 图像保存成功！尺寸: ${finalImageData.width}x${finalImageData.height}，大小: ${(stats.size / 1024).toFixed(1)} KB`);
 
-    await saveSessionState(page.context());
+    // session maintained natively by Chrome profile
 
     const accompanyingText = await page
       .locator('div[data-message-author-role="assistant"]')
@@ -288,3 +288,5 @@ async function main() {
 }
 
 main();
+
+
