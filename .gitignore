@@ -1,0 +1,9 @@
+node_modules/
+output_images/
+*profile*/
+session_state.json
+.env
+.npm-cache/
+*.log
+.DS_Store
+Thumbs.db

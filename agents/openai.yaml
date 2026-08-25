@@ -1,0 +1,4 @@
+interface:
+  display_name: ChatGPT Browser Image Generator
+  short_description: Control web ChatGPT in Chrome via CDP for image generation
+  default_prompt: Use browser ChatGPT to generate an image

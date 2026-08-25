@@ -1,0 +1,22 @@
+{
+  "name": "chatgpt-browser-imagegen",
+  "version": "2.0.0",
+  "description": "Control local persistent Chrome/Edge logged into ChatGPT via CDP for high-res image generation",
+  "main": "cli.js",
+  "bin": {
+    "chatgpt-gen": "./cli.js"
+  },
+  "scripts": {
+    "start": "node cli.js launch",
+    "launch": "node cli.js launch",
+    "login": "node cli.js login",
+    "status": "node cli.js status",
+    "image": "node cli.js generate",
+    "generate": "node cli.js generate",
+    "ask": "node cli.js ask",
+    "batch": "node cli.js batch"
+  },
+  "dependencies": {
+    "playwright-core": "^1.50.0"
+  }
+}

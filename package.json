@@ -1,0 +1,34 @@
+{
+  "name": "gpt-image",
+  "version": "2.0.0",
+  "description": "GPT图像 - 基于浏览器持久化会话与 CDP 协议的 ChatGPT 网页图像生成与自动化工具",
+  "main": "scripts/cli.js",
+  "bin": {
+    "gpt-image": "./scripts/cli.js",
+    "chatgpt-gen": "./scripts/cli.js"
+  },
+  "scripts": {
+    "start": "node scripts/cli.js launch",
+    "launch": "node scripts/cli.js launch",
+    "login": "node scripts/cli.js login",
+    "status": "node scripts/cli.js status",
+    "image": "node scripts/cli.js generate",
+    "generate": "node scripts/cli.js generate",
+    "ask": "node scripts/cli.js ask",
+    "batch": "node scripts/cli.js batch"
+  },
+  "keywords": [
+    "chatgpt",
+    "image-generation",
+    "playwright",
+    "cdp",
+    "dalle3",
+    "gpt4o",
+    "ai-art"
+  ],
+  "author": "YUMI",
+  "license": "MIT",
+  "dependencies": {
+    "playwright-core": "^1.50.0"
+  }
+}
