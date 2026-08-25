@@ -1,9 +1,13 @@
 node_modules/
 output_images/
 *profile*/
-session_state.json
-.env
-.npm-cache/
 *.log
+.env*
 .DS_Store
 Thumbs.db
+.npm-cache/
+*.png
+*.jpg
+*.jpeg
+*.webp
+*session*

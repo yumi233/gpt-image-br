@@ -2,22 +2,19 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 
-const userHome = process.env.USERPROFILE || process.env.HOME || os.homedir() || "C:\\Users\\YUMI";
+const userHome = process.env.USERPROFILE || process.env.HOME || os.homedir();
 
 // 标准持久化配置目录
 let defaultProfileDir = path.join(userHome, ".codex", "browser_chatgpt_profile");
 
-// 兼容旧环境配置（如已在 E 盘存在 profile）
-if (!fs.existsSync(defaultProfileDir) && fs.existsSync("E:\\MiniMax h3\\browser_chatgpt\\chrome_profile")) {
-  defaultProfileDir = "E:\\MiniMax h3\\browser_chatgpt\\chrome_profile";
+// 兼容自定义环境路径
+if (!fs.existsSync(defaultProfileDir) && process.env.CHATGPT_PROFILE_DIR) {
+  defaultProfileDir = process.env.CHATGPT_PROFILE_DIR;
 }
 
 const PROFILE_DIR = process.env.CHATGPT_PROFILE_DIR || defaultProfileDir;
-const SESSION_STATE_FILE = path.join(PROFILE_DIR, "session_state.json");
-
 const CDP_PORT = parseInt(process.env.CHATGPT_CDP_PORT, 10) || 9222;
 const CDP_URL = process.env.CHROME_CDP_URL || process.env.CHATGPT_CDP_URL || `http://127.0.0.1:${CDP_PORT}`;
-
 const CHATGPT_URL = process.env.CHATGPT_URL || "https://chatgpt.com/";
 
 const BROWSER_CANDIDATES = [
@@ -69,7 +66,6 @@ function findBrowserExecutable(preferredType) {
 
 module.exports = {
   PROFILE_DIR,
-  SESSION_STATE_FILE,
   CDP_PORT,
   CDP_URL,
   CHATGPT_URL,

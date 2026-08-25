@@ -1,6 +1,6 @@
 # GPT图像 (ChatGPT Browser Image Generator)
 
-基于 Chrome DevTools Protocol (CDP) 与持久化浏览器会话的 **ChatGPT 网页端图像生成与自动化工具**。
+基于 Chrome DevTools Protocol (CDP) 与持久化浏览器配置的 **ChatGPT 网页端图像生成与自动化工具**。
 
 支持直接驱动本地已登录的 Chrome / Edge 浏览器，进行**高清文生图 (T2I)**、**图生图/多图参考重绘 (I2I/Ref2I)**、**文本指令交互**与**批量出图任务**。
 
@@ -8,9 +8,9 @@
 
 ## ✨ 核心特性
 
-- 🔒 **永久记住账号**：采用独立专属持久化 Profile（`~/.codex/browser_chatgpt_profile`）+ `session_state.json` 双重状态备份机制，**一次登录，永久有效**，彻底解决掉登录态问题。
+- 🔒 **永久记住账号**：采用独立专属持久化 Profile 机制，配合 `--restore-last-session` 与官方 Session 校验，**一次登录，永久有效**，关闭浏览器再开不掉登录态。
 - 🛡️ **防反爬与反自动化检测**：注入反检测参数（`--disable-blink-features=AutomationControlled`、消除 `navigator.webdriver`），完美支持 Google 登录、微软 SSO 以及顺畅通过 Cloudflare 人机验证。
-- 🎨 **原图级高清提取**：底层拦截 ChatGPT 内部 Estuary / DALL-E 高清图像流与原图 Blob，无损保存至本地，杜绝前端压缩损耗。
+- 🎨 **原图级高清提取**：底层拦截 ChatGPT 内部 Estuary / DALL-E 高清图像，通过 Canvas 像素级提取无损保存至本地，杜绝前端压缩损耗。
 - 🖼️ **支持图生图 (I2I / Ref2I)**：支持一键上传单张或多张参考图片，自动完成缩略图就绪监听并进行重绘与微调。
 - ⚡ **守护进程自启动**：运行生图指令时，若检测到调试端口（9222）未开启，脚本将自动在后台唤起浏览器，无需手动操作。
 - 💻 **一体化 CLI 工具**：提供统一的 `cli.js` 命令行入口，支持登录、状态诊断、生图、文本交互与批量任务。
@@ -40,7 +40,7 @@ npm run login
 node scripts/cli.js login
 ```
 
-浏览器打开后，在页面中登录你的 ChatGPT 账号。登录成功后，脚本会自动检测并把 Cookies 和会话状态备份到持久化文件中。
+浏览器打开后，在页面中登录你的 ChatGPT 账号。登录成功后，浏览器会自动保存在专属 Profile 中，以后无需重复登录。
 
 ### 3. 环境自检与状态诊断
 
@@ -123,7 +123,7 @@ node scripts/cli.js batch --file tasks.json --output ./output_images/batch
 | `--output` | `-o` | 输出文件路径或目标目录 | `./output_images` |
 | `--aspect` | `-a` | 目标画幅比例（如 `16:9`, `9:16`, `1:1`） | - |
 | `--new-chat`| `-n` | 在生成前开启全新会话 | `false` |
-| `--timeout` | `-t` | 最长等待生成时间（秒） | `180` |
+| `--timeout` | `-t` | 最长等待生成时间（秒） | `240` |
 
 ---
 
@@ -135,17 +135,16 @@ gpt-image/
 │   ├── cli.js               # 统一命令行入口
 │   ├── config.js            # 路径与端口统一配置文件
 │   ├── launcher.js          # 浏览器唤起与端口检测模块
-│   ├── session.js           # 会话持久化与 Cookies 备份恢复
-│   ├── common.js            # CDP 核心通信、DOM 选择器与防检测注入
-│   ├── generate_image.js    # 图像生成与 Estuary 高清提取
+│   ├── common.js            # CDP 通信、DOM 选择器与防检测注入
+│   ├── generate_image.js    # 图像生成与 Canvas 无损提取
 │   ├── ask_text.js          # 文本交互对话
-│   ├── check_status.js      # 状态自检与诊断
+│   ├── check_status.js      # 状态自检与诊断 (官方 Session API 校验)
 │   ├── login.js             # 一键永久登录助手
 │   ├── batch_generate.js    # 批量生图执行器
 │   ├── launch_browser.bat   # Windows 快捷启动脚本
 │   └── launch_browser.ps1   # PowerShell 快捷启动脚本
 ├── agents/
-│   └── openai.yaml          # Codex / OpenAI Agent 规范
+│   └── openai.yaml          # Agent 元数据规范
 ├── SKILL.md                 # Codex Skill 定义文档
 ├── package.json             # 项目元数据与依赖配置
 ├── .gitignore               # Git 忽略配置
@@ -157,4 +156,3 @@ gpt-image/
 ## 📄 开源协议
 
 本项目采用 [MIT License](LICENSE) 开源协议。
-

@@ -7,7 +7,6 @@ const {
   waitForLogin,
   fillAndSendPrompt,
   startNewChat,
-  saveSessionState
 } = require("./common");
 
 function parseArgs() {
@@ -288,5 +287,6 @@ async function main() {
 }
 
 main();
+
 
 

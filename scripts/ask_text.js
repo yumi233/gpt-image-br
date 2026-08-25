@@ -4,7 +4,6 @@ const {
   checkLoginStatus,
   fillAndSendPrompt,
   startNewChat,
-  saveSessionState
 } = require("./common");
 
 function parseArgs() {
@@ -91,7 +90,6 @@ async function main() {
       .innerText()
       .catch(() => "");
 
-    await saveSessionState(page.context());
 
     console.log("\n================ [ChatGPT 回复] ================\n");
     console.log(lastAssistantMessage || "(无回复内容)");
@@ -105,3 +103,4 @@ async function main() {
 }
 
 main();
+
