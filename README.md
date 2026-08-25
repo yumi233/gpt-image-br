@@ -25,8 +25,8 @@
 需要 Node.js (v18+) 环境：
 
 ```bash
-git clone https://github.com/your-username/gpt-image.git
-cd gpt-image
+git clone https://github.com/yumi233/gpt-image-br.git
+cd gpt-image-br
 npm install
 ```
 
@@ -157,3 +157,4 @@ gpt-image/
 ## 📄 开源协议
 
 本项目采用 [MIT License](LICENSE) 开源协议。
+
