@@ -1,5 +1,5 @@
 const net = require("net");
-const { exec, spawn } = require("child_process");
+const { spawn, exec } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const {
@@ -37,37 +37,7 @@ function isPortListening(port = CDP_PORT, host = "127.0.0.1", timeoutMs = 1000) 
 }
 
 /**
- * 隐藏后台浏览器的桌面窗口与任务栏图标 (SW_HIDE)
- */
-function hideBrowserWindowOnWindows(port = CDP_PORT) {
-  if (process.platform !== "win32") return;
-
-  const psScript = `
-Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public class Win32 {
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-}
-"@
-Start-Sleep -Milliseconds 800
-$conns = Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue
-if ($conns) {
-    $pids = $conns | Select-Object -ExpandProperty OwningProcess -Unique
-    foreach ($pidNum in $pids) {
-        $p = Get-Process -Id $pidNum -ErrorAction SilentlyContinue
-        if ($p -and $p.MainWindowHandle -ne 0) {
-            [Win32]::ShowWindow($p.MainWindowHandle, 0)
-        }
-    }
-}
-`;
-  exec(`powershell -NoProfile -NonInteractive -Command "${psScript.replace(/"/g, '\\"')}"`);
-}
-
-/**
- * 启动浏览器（支持 0 任务栏图标的无感静默后台模式）
+ * 启动浏览器实例
  */
 async function launchBrowser(options = {}) {
   const browserType = options.browserType || null;
@@ -75,7 +45,6 @@ async function launchBrowser(options = {}) {
   const port = options.port || CDP_PORT;
   const targetUrl = options.targetUrl || CHATGPT_URL;
   const waitReady = options.waitReady !== false;
-  const silent = options.visible ? false : (options.silent !== false);
 
   const browserInfo = findBrowserExecutable(browserType);
   if (!browserInfo) {
@@ -86,8 +55,7 @@ async function launchBrowser(options = {}) {
     fs.mkdirSync(profileDir, { recursive: true });
   }
 
-  const modeText = silent ? "无感静默后台模式 (0 任务栏图标)" : "可视桌面窗口模式";
-  console.log(`[启动器] 选用浏览器: ${browserInfo.name} (${modeText})`);
+  console.log(`[启动器] 选用浏览器: ${browserInfo.name}`);
   console.log(`[启动器] 专属持久化 Profile 目录: ${profileDir}`);
   console.log(`[启动器] 调试端口: ${port}`);
 
@@ -98,16 +66,9 @@ async function launchBrowser(options = {}) {
     "--disable-blink-features=AutomationControlled",
     "--no-first-run",
     "--no-default-browser-check",
-    "--restore-last-session"
+    "--restore-last-session",
+    targetUrl
   ];
-
-  if (silent) {
-    chromeArgs.push("--window-position=-32000,-32000", "--window-size=1920,1080");
-  } else {
-    chromeArgs.push("--start-maximized");
-  }
-
-  chromeArgs.push(targetUrl);
 
   const psArgList = chromeArgs.map((a) => `"${a}"`).join(", ");
   const psCmd = `Start-Process "${browserInfo.path}" -ArgumentList @(${psArgList}) -PassThru | Out-Null`;
@@ -124,36 +85,43 @@ async function launchBrowser(options = {}) {
     while (Date.now() - start < maxWait) {
       const open = await isPortListening(port);
       if (open) {
-        if (silent) {
-          hideBrowserWindowOnWindows(port);
-        }
-        return { success: true, browser: browserInfo, profileDir, port, silent };
+        return { success: true, browser: browserInfo, profileDir, port, spawned: true };
       }
       await new Promise((r) => setTimeout(r, 600));
     }
   }
 
-  if (silent) {
-    hideBrowserWindowOnWindows(port);
-  }
-
-  return { success: true, browser: browserInfo, profileDir, port, silent };
+  return { success: true, browser: browserInfo, profileDir, port, spawned: true };
 }
 
+/**
+ * 确保浏览器正在运行（若未启动则按需启动）
+ */
 async function ensureBrowserRunning(options = {}) {
   const port = options.port || CDP_PORT;
   const isListening = await isPortListening(port);
 
   if (isListening) {
-    return { alreadyRunning: true, port };
+    return { alreadyRunning: true, port, spawned: false };
   }
 
+  console.log(`[启动器] 正在按需唤起专属浏览器...`);
   return await launchBrowser(options);
+}
+
+/**
+ * 任务完成后彻底关闭后台调试浏览器，清除任务栏多余图标
+ */
+async function closeBrowser(port = CDP_PORT) {
+  if (process.platform === "win32") {
+    const psCmd = `$conns = Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue; if ($conns) { $pids = $conns | Select-Object -ExpandProperty OwningProcess -Unique; foreach ($p in $pids) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue } }`;
+    exec(`powershell -NoProfile -NonInteractive -Command "${psCmd.replace(/"/g, '\\"')}"`);
+  }
 }
 
 module.exports = {
   isPortListening,
   launchBrowser,
   ensureBrowserRunning,
-  hideBrowserWindowOnWindows
+  closeBrowser
 };
