@@ -58,7 +58,12 @@ async function getChatGPTPage(browser) {
   const pages = context.pages();
   let page = pages.find((p) => {
     const url = p.url();
-    return url.includes("chatgpt.com") || url.includes("chat.openai.com");
+    return (
+      url.includes("chatgpt.com") ||
+      url.includes("chat.openai.com") ||
+      url.includes("accounts.google.com") ||
+      url.includes("auth.openai.com")
+    );
   });
 
   if (!page) {
@@ -84,10 +89,21 @@ async function getChatGPTPage(browser) {
  */
 async function checkLoginStatus(page) {
   try {
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(800);
+    const url = page.url();
+
+    // 1. 处于第三方登录或验证页面
+    if (url.includes("accounts.google.com") || url.includes("auth.openai.com") || url.includes("/auth/")) {
+      return {
+        loggedIn: false,
+        status: "need_login",
+        message: "检测到正在进行 Google / OpenAI 登录或两步验证，请在浏览器中完成验证。"
+      };
+    }
+
     const content = await page.content();
 
-    // 1. Cloudflare 人机验证
+    // 2. Cloudflare 人机验证
     if (
       content.includes("Just a moment...") ||
       content.includes("cf-turnstile") ||
@@ -100,7 +116,7 @@ async function checkLoginStatus(page) {
       };
     }
 
-    // 2. 显式登录按钮
+    // 3. 显式登录按钮
     const loginBtn = await page.$(
       'button[data-testid="login-button"], a[href*="/auth/login"], button:has-text("Log in"), button:has-text("登录"), button:has-text("Sign in")'
     );
@@ -112,9 +128,11 @@ async function checkLoginStatus(page) {
       };
     }
 
-    // 3. 检查已登录特征
+    // 4. 检查已登录核心特征（输入框或个人信息头像）
     const input = await locatePromptInput(page);
-    const hasAvatar = await page.$('button[data-testid="profile-button"], div[data-testid="user-profile-menu"], button[aria-label*="profile"], button[aria-label*="个人资料"]');
+    const hasAvatar = await page.$(
+      'button[data-testid="profile-button"], div[data-testid="user-profile-menu"], button[aria-label*="profile"], button[aria-label*="个人资料"]'
+    );
 
     if (input || hasAvatar) {
       const userInfo = await extractUserInfo(page);
@@ -127,10 +145,26 @@ async function checkLoginStatus(page) {
       };
     }
 
+    if (url.includes("chatgpt.com")) {
+      // 页面正在加载或渲染
+      await page.waitForTimeout(1500);
+      const retryInput = await locatePromptInput(page);
+      if (retryInput) {
+        const userInfo = await extractUserInfo(page);
+        return {
+          loggedIn: true,
+          status: "ready",
+          user: userInfo.name,
+          plan: userInfo.plan,
+          message: `ChatGPT 已就绪 (用户: ${userInfo.name}, 会员: ${userInfo.plan})`
+        };
+      }
+    }
+
     return {
-      loggedIn: true,
-      status: "ready",
-      message: "ChatGPT 页面已就绪。"
+      loggedIn: false,
+      status: "need_login",
+      message: "未检测到已登录的输入框或会话界面，请在浏览器中确认登录。"
     };
   } catch (err) {
     return {
@@ -160,7 +194,7 @@ async function waitForLogin(page, timeoutMs = 180000) {
     if (status.status === "cloudflare_challenge") {
       process.stdout.write("\r[等待中] 请在浏览器中点击 Cloudflare 人机验证...");
     } else {
-      process.stdout.write("\r[等待中] 请在浏览器中输入账号密码并登录...");
+      process.stdout.write("\r[等待中] 请在浏览器中完成 Google/邮箱登录或两步验证...");
     }
 
     await page.waitForTimeout(2000);
@@ -188,7 +222,7 @@ async function locatePromptInput(page) {
   for (const sel of selectors) {
     try {
       const el = page.locator(sel).first();
-      if (await el.isVisible({ timeout: 800 }).catch(() => false)) {
+      if (await el.isVisible({ timeout: 600 }).catch(() => false)) {
         return el;
       }
     } catch {}
@@ -220,7 +254,6 @@ async function uploadImages(page, imagePaths) {
   await fileInput.setInputFiles(validPaths);
 
   console.log("[图生图] 等待图片上传与缩略图渲染...");
-  // 等待图片上传进度完成（通常 3-5 秒）
   await page.waitForTimeout(3500);
 }
 

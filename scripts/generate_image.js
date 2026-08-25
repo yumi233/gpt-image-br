@@ -4,6 +4,7 @@ const {
   connectBrowser,
   getChatGPTPage,
   checkLoginStatus,
+  waitForLogin,
   fillAndSendPrompt,
   startNewChat,
   saveSessionState
@@ -16,7 +17,7 @@ function parseArgs() {
     images: [],
     output: "",
     newChat: false,
-    timeout: 180,
+    timeout: 240,
     aspect: "",
     autoLaunch: true
   };
@@ -41,7 +42,7 @@ function parseArgs() {
     } else if (arg === "-a" || arg === "--aspect") {
       params.aspect = args[++i];
     } else if (arg === "-t" || arg === "--timeout") {
-      params.timeout = parseInt(args[++i], 10) || 180;
+      params.timeout = parseInt(args[++i], 10) || 240;
     } else if (arg === "--no-auto-launch") {
       params.autoLaunch = false;
     } else if (!params.prompt && !arg.startsWith("-")) {
@@ -52,12 +53,18 @@ function parseArgs() {
   return params;
 }
 
-async function getGeneratedImages(page) {
-  return await page.evaluate(() => {
-    const imgs = Array.from(document.querySelectorAll("main img, div[data-message-author-role='assistant'] img"));
-    const generated = imgs.filter((img) => {
+/**
+ * 提取页面中真正由 Assistant 绘制/生成的图片
+ */
+async function extractGeneratedImage(page, initialImgCount = 0) {
+  return await page.evaluate((initialCount) => {
+    // 优先从显式标有“已生成”或“Generated”的 img 标签中提取
+    const candidateImgs = Array.from(document.querySelectorAll("main img, img"));
+    
+    // 过滤掉头像、用户上传的缩略图
+    const generated = candidateImgs.filter((img) => {
       const alt = img.alt || "";
-      const isUserThumbnail =
+      const isUserUpload =
         alt.endsWith(".png") ||
         alt.endsWith(".jpg") ||
         alt.endsWith(".jpeg") ||
@@ -66,52 +73,61 @@ async function getGeneratedImages(page) {
         alt.includes("上传的图片");
 
       const isAvatar =
-        (img.src && (img.src.includes("avatar") || img.src.includes("profile"))) ||
-        (img.className && img.className.includes("rounded-full"));
+        (img.src && (img.src.includes("avatar") || img.src.includes("profile") || img.src.includes("public_content"))) ||
+        (img.className && img.className.includes("rounded-full")) ||
+        alt.includes("个人资料") ||
+        alt.includes("Profile");
 
-      const isGenerated =
+      const isRealGenerated =
         alt.includes("已生成") ||
         alt.includes("Generated") ||
         alt.includes("Created image") ||
         alt.includes("DALL·E") ||
-        (img.src && (img.src.includes("estuary/content") || img.src.includes("oaiusercontent.com") || img.src.includes("files.oaiusercontent.com"))) ||
-        img.naturalWidth > 400;
+        img.closest('div[data-message-author-role="assistant"]') !== null ||
+        (img.naturalWidth > 600 && !isUserUpload && !isAvatar);
 
-      return !isUserThumbnail && !isAvatar && isGenerated;
+      return !isUserUpload && !isAvatar && isRealGenerated;
     });
 
-    return generated.map((img) => img.currentSrc || img.src).filter(Boolean);
-  });
+    if (generated.length === 0) return null;
+
+    const targetImg = generated[generated.length - 1];
+    if (!targetImg || targetImg.naturalWidth < 100) return null;
+
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = targetImg.naturalWidth;
+      canvas.height = targetImg.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(targetImg, 0, 0);
+      const base64 = canvas.toDataURL("image/png").split(",")[1];
+
+      return {
+        base64,
+        src: targetImg.currentSrc || targetImg.src,
+        alt: targetImg.alt || "ChatGPT Generated Image",
+        width: targetImg.naturalWidth,
+        height: targetImg.naturalHeight
+      };
+    } catch {
+      return {
+        src: targetImg.currentSrc || targetImg.src,
+        alt: targetImg.alt || "ChatGPT Generated Image",
+        width: targetImg.naturalWidth,
+        height: targetImg.naturalHeight,
+        needScreenshot: true
+      };
+    }
+  }, initialImgCount);
 }
 
-async function downloadImageFromBrowser(page, imgSrc, outputPath) {
-  try {
-    const base64Data = await page.evaluate(async (src) => {
-      const response = await fetch(src, { credentials: "include" });
-      if (!response.ok) {
-        throw new Error(`Fetch status ${response.status}: ${response.statusText}`);
-      }
-      const blob = await response.blob();
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result.split(",")[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-    }, imgSrc);
-
-    const buffer = Buffer.from(base64Data, "base64");
-    fs.writeFileSync(outputPath, buffer);
-    return outputPath;
-  } catch (err) {
-    console.warn(`[下载备用方案] 直接 Fetch 图片失败 (${err.message})，尝试 DOM 截图提取...`);
-    const imgLocator = page.locator(`img[src="${imgSrc}"], img[currentSrc="${imgSrc}"]`).last();
-    if (await imgLocator.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await imgLocator.screenshot({ path: outputPath });
-      return outputPath;
-    }
-    throw err;
-  }
+async function isGenerationInProgress(page) {
+  return await page.evaluate(() => {
+    const stopBtn = document.querySelector(
+      'button[data-testid="stop-button"], button[aria-label*="Stop"], button[aria-label*="停止"]'
+    );
+    return !!stopBtn;
+  });
 }
 
 async function main() {
@@ -122,7 +138,6 @@ async function main() {
     process.exit(1);
   }
 
-  // 构造完整提示词
   let fullPrompt = params.prompt;
   if (!fullPrompt && params.images.length > 0) {
     fullPrompt = "请参考我上传的参考图片，严格保持人物/主体特征与核心构图，生成一张超高清细节与电影级质感的概念图。";
@@ -139,11 +154,11 @@ async function main() {
     const page = await getChatGPTPage(browser);
 
     console.log(`[2/6] 校验账号登录态...`);
-    const status = await checkLoginStatus(page);
+    let status = await checkLoginStatus(page);
     if (!status.loggedIn) {
-      console.error(`\n[✗ 错误] ${status.message}`);
-      console.error(`[提示] 请运行 "node cli.js login" 在浏览器中登录账号，登录后将永久保存。`);
-      process.exit(1);
+      console.log(`\n[提示] ${status.message}`);
+      console.log("[自动等待] 请在打开的浏览器中完成验证/登录，完成后将自动继续生图并永久记录会话...");
+      status = await waitForLogin(page, 180000);
     }
 
     console.log(`[✓] 账号就绪: ${status.user || "已登录"} (${status.plan || "ChatGPT"})`);
@@ -153,79 +168,48 @@ async function main() {
       await startNewChat(page);
     }
 
-    console.log(`[4/6] 记录当前已有图片...`);
-    const existingImages = await getGeneratedImages(page);
-
-    // 监听网络响应以捕获最新的生成图 URL
-    const interceptedUrls = [];
-    const responseHandler = (response) => {
-      const url = response.url();
-      if (
-        url.includes("estuary/content") ||
-        url.includes("files.oaiusercontent.com") ||
-        (url.includes("blob:") && response.request().resourceType() === "image")
-      ) {
-        if (response.status() === 200) {
-          interceptedUrls.push(url);
-        }
-      }
-    };
-    page.on("response", responseHandler);
-
     if (params.images.length > 0) {
-      console.log(`[5/6] 上传 ${params.images.length} 张参考图并发送提示词: "${fullPrompt}"`);
+      console.log(`[4/6] 上传 ${params.images.length} 张参考图并发送提示词: "${fullPrompt}"`);
     } else {
-      console.log(`[5/6] 发送生图指令: "${fullPrompt}"`);
+      console.log(`[4/6] 发送生图指令: "${fullPrompt}"`);
     }
 
     await fillAndSendPrompt(page, fullPrompt, params.images);
 
-    console.log(`[6/6] 正在生成图像，最长等待 ${params.timeout} 秒...`);
+    console.log(`[5/6] 正在生成图像，持续监听直至出图完成（最长等待 ${params.timeout} 秒）...`);
     const startTime = Date.now();
     const maxWaitMs = params.timeout * 1000;
-    let newImgSrc = null;
-    let hadStopButton = false;
+    let hadGeneratingState = false;
+    let finalImageData = null;
 
     while (Date.now() - startTime < maxWaitMs) {
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(2500);
 
-      const stopBtn = page.locator(
-        'button[data-testid="stop-button"], button[aria-label="停止生成"], button[aria-label="Stop streaming"], button[aria-label="Stop generating"]'
-      ).first();
-
-      const isStopVisible = await stopBtn.isVisible().catch(() => false);
-      if (isStopVisible) {
-        hadStopButton = true;
+      const inProgress = await isGenerationInProgress(page);
+      if (inProgress) {
+        hadGeneratingState = true;
       }
 
-      const currentImages = await getGeneratedImages(page);
-      const diffImages = currentImages.filter((src) => !existingImages.includes(src));
-
-      if (diffImages.length > 0) {
-        newImgSrc = diffImages[diffImages.length - 1];
+      const imgResult = await extractGeneratedImage(page);
+      if (imgResult && imgResult.width > 400) {
+        finalImageData = imgResult;
       }
 
-      if (hadStopButton && !isStopVisible && newImgSrc) {
-        // 生成结束并捕获到图片
+      // 当且仅当：生成已结束（stop 消失），且已经捕获到高分辨率结果图
+      if (hadGeneratingState && !inProgress && finalImageData) {
+        // 再额外等待 1.5 秒让图片完全渲染到位
         await page.waitForTimeout(1500);
-        break;
-      } else if (!hadStopButton && newImgSrc && Date.now() - startTime > 12000) {
-        await page.waitForTimeout(2000);
+        finalImageData = await extractGeneratedImage(page);
         break;
       }
 
       const elapsed = Math.round((Date.now() - startTime) / 1000);
-      process.stdout.write(`\r[生成中] 已等待 ${elapsed}s (已捕获图像: ${newImgSrc ? "是" : "否"})...`);
+      process.stdout.write(`\r[生成中] 已等待 ${elapsed}s (服务器运算中: ${inProgress ? "是" : "否"}, 检测到高清图: ${finalImageData ? "是" : "否"})...`);
     }
 
-    page.off("response", responseHandler);
     console.log("\n");
 
-    if (!newImgSrc && interceptedUrls.length > 0) {
-      newImgSrc = interceptedUrls[interceptedUrls.length - 1];
-    }
-
-    if (!newImgSrc) {
+    if (!finalImageData) {
       const lastAssistantMessage = await page
         .locator('div[data-message-author-role="assistant"]')
         .last()
@@ -237,7 +221,6 @@ async function main() {
       process.exit(2);
     }
 
-    // 处理输出文件路径
     const cwd = process.cwd();
     let finalFilePath;
 
@@ -259,13 +242,19 @@ async function main() {
 
     fs.mkdirSync(path.dirname(finalFilePath), { recursive: true });
 
-    console.log(`[下载] 正在提取高清图像并保存至: ${finalFilePath}`);
-    await downloadImageFromBrowser(page, newImgSrc, finalFilePath);
+    console.log(`[6/6] 正在以无损原始分辨率导出保存至: ${finalFilePath}`);
+
+    if (finalImageData.base64) {
+      const buffer = Buffer.from(finalImageData.base64, "base64");
+      fs.writeFileSync(finalFilePath, buffer);
+    } else {
+      const imgLocator = page.locator(`img[alt*="已生成"], img[alt*="Generated"]`).last();
+      await imgLocator.screenshot({ path: finalFilePath });
+    }
 
     const stats = fs.statSync(finalFilePath);
-    console.log(`[✓] 图像保存成功！大小: ${(stats.size / 1024).toFixed(1)} KB`);
+    console.log(`[✓] 图像保存成功！尺寸: ${finalImageData.width}x${finalImageData.height}，大小: ${(stats.size / 1024).toFixed(1)} KB`);
 
-    // 自动刷新保存最新会话状态
     await saveSessionState(page.context());
 
     const accompanyingText = await page
@@ -277,7 +266,8 @@ async function main() {
     const resultInfo = {
       success: true,
       imagePath: finalFilePath,
-      imageUrl: newImgSrc,
+      title: finalImageData.alt,
+      dimensions: `${finalImageData.width}x${finalImageData.height}`,
       fileSizeKb: (stats.size / 1024).toFixed(1),
       text: accompanyingText,
       prompt: fullPrompt,

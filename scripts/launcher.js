@@ -1,5 +1,5 @@
 const net = require("net");
-const { spawn } = require("child_process");
+const { exec, spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const {
@@ -62,28 +62,38 @@ async function launchBrowser(options = {}) {
   console.log(`[启动器] 专属持久化 Profile 目录: ${profileDir}`);
   console.log(`[启动器] 调试端口: ${port}`);
 
-  const args = [
-    `--remote-debugging-port=${port}`,
-    `--user-data-dir=${profileDir}`,
-    "--profile-directory=Default",
-    "--disable-blink-features=AutomationControlled",
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--restore-last-session",
-    "--disable-infobars",
-    "--password-store=basic",
-    "--enable-features=NetworkService,NetworkServiceInProcess",
-    "--start-maximized",
-    targetUrl
-  ];
+  if (process.platform === "win32") {
+    // Windows 下使用 PowerShell Start-Process 最稳定，避免 Node spawn 子进程句柄断连问题
+    const psCmd = `Start-Process "${browserInfo.path}" -ArgumentList @(` +
+      `"--remote-debugging-port=${port}", ` +
+      `"--user-data-dir=${profileDir}", ` +
+      `"--profile-directory=Default", ` +
+      `"--disable-blink-features=AutomationControlled", ` +
+      `"--no-first-run", ` +
+      `"--no-default-browser-check", ` +
+      `"--restore-last-session", ` +
+      `"${targetUrl}"` +
+      `)`;
 
-  const child = spawn(browserInfo.path, args, {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: false
-  });
+    exec(`powershell -NoProfile -Command "${psCmd.replace(/"/g, '\\"')}"`);
+  } else {
+    const args = [
+      `--remote-debugging-port=${port}`,
+      `--user-data-dir=${profileDir}`,
+      "--profile-directory=Default",
+      "--disable-blink-features=AutomationControlled",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--restore-last-session",
+      targetUrl
+    ];
 
-  child.unref();
+    const child = spawn(browserInfo.path, args, {
+      detached: true,
+      stdio: "ignore"
+    });
+    child.unref();
+  }
 
   if (waitReady) {
     console.log("[启动器] 正在等待浏览器调试端口就绪...");
