@@ -7,9 +7,13 @@ const userHome = process.env.USERPROFILE || process.env.HOME || os.homedir();
 // 标准持久化配置目录
 let defaultProfileDir = path.join(userHome, ".codex", "browser_chatgpt_profile");
 
-// 兼容自定义环境路径
-if (!fs.existsSync(defaultProfileDir) && process.env.CHATGPT_PROFILE_DIR) {
-  defaultProfileDir = process.env.CHATGPT_PROFILE_DIR;
+// 兼容已有本地 profile 路径
+if (!fs.existsSync(defaultProfileDir)) {
+  if (process.env.CHATGPT_PROFILE_DIR && fs.existsSync(process.env.CHATGPT_PROFILE_DIR)) {
+    defaultProfileDir = process.env.CHATGPT_PROFILE_DIR;
+  } else if (fs.existsSync("E:\\MiniMax h3\\browser_chatgpt\\chrome_profile")) {
+    defaultProfileDir = "E:\\MiniMax h3\\browser_chatgpt\\chrome_profile";
+  }
 }
 
 const PROFILE_DIR = process.env.CHATGPT_PROFILE_DIR || defaultProfileDir;

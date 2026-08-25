@@ -15,8 +15,7 @@ const scriptMap = {
   gen: "generate_image.js",
   ask: "ask_text.js",
   chat: "ask_text.js",
-  batch: "batch_generate.js",
-  launch: "launch_helper.js"
+  batch: "batch_generate.js"
 };
 
 function printHelp() {
@@ -28,10 +27,11 @@ function printHelp() {
 用法: node cli.js <命令> [参数...]
 
 核心命令:
-  login                      启动专属浏览器并辅助完成永久登录与会话保存
-  status                     检测当前浏览器调试端口、Profile 及 ChatGPT 登录状态
-  launch [--edge|--chrome]   启动专属持久化浏览器窗口 (Port: 9222)
-  generate -p "提示词"       生成/修改图像并自动保存至本地
+  login                      启动专属浏览器并辅助完成登录 (可视窗口模式)
+  status                     检测当前浏览器调试端口、Profile 及 ChatGPT 账号状态
+  launch [--edge|--chrome]   启动后台无感专属浏览器窗口 (Port: 9222)
+      [--visible]              强制以桌面可视窗口模式启动
+  generate -p "提示词"       生成/修改图像并自动保存至本地 (全自动后台无感运行)
       [-i "参考图1,参考图2"]    传入单张或多张参考图 (图生图/重绘)
       [-o "输出路径"]          指定保存路径或目录
       [-n]                     开启全新对话
@@ -40,10 +40,10 @@ function printHelp() {
   batch -f <tasks.json>      批量执行生图任务列表
 
 特性:
-  ✓ 专属持久化 Profile: 登录一次永久保存，绝不掉登录态
+  ✓ 默认无感后台静默运行: 用户界面不弹窗，体验等同原生 API
+  ✓ 专属持久化 Profile: 登录一次永久保存，关闭再开不掉登录态
   ✓ 防反爬/反自动化特征注入: 解决 Google/Cloudflare 拦截
-  ✓ 智能高分辨率提取: 自动截获 ChatGPT 内部 Estuary 原图
-  ✓ 自动化守护: 调试端口未启动时自动拉起浏览器
+  ✓ Canvas 原画无损提取: 毫秒级提取 8K/高清原图
 `);
 }
 
@@ -54,9 +54,10 @@ if (command === "help" || command === "--help" || command === "-h") {
 
 if (command === "launch") {
   const { launchBrowser } = require("./launcher");
-  const browserType = remainingArgs.includes("--edge") ? "edge" : remainingArgs.includes("--chrome") ? "chrome" : null;\n  const visible = remainingArgs.includes("--visible");\n  launchBrowser({ browserType, visible })
-  
-    console.log("[✓] 浏览器已在后台启动！");
+  const browserType = remainingArgs.includes("--edge") ? "edge" : remainingArgs.includes("--chrome") ? "chrome" : null;
+  const visible = remainingArgs.includes("--visible");
+  launchBrowser({ browserType, visible }).then(() => {
+    console.log(visible ? "[✓] 浏览器已在桌面窗口启动！" : "[✓] 浏览器已在后台无感静默模式启动！");
   }).catch((err) => {
     console.error(`[✗] 启动失败: ${err.message}`);
   });
@@ -75,4 +76,3 @@ if (command === "launch") {
   printHelp();
   process.exit(1);
 }
-
