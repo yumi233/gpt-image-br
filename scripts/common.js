@@ -20,7 +20,9 @@ async function connectBrowser(options = {}) {
       await ensureBrowserRunning({
         browserType: options.browserType,
         profileDir: options.profileDir || PROFILE_DIR,
-        port: options.port || CDP_PORT
+        port: options.port || CDP_PORT,
+        visible: options.visible || false,
+        silent: options.silent
       });
     } catch (e) {
       console.warn(`[启动器提示] 尝试自动拉起浏览器时发生异常: ${e.message}`);
@@ -369,3 +371,4 @@ module.exports = {
   CDP_URL,
   PROFILE_DIR
 };
+

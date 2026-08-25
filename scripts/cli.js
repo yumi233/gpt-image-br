@@ -54,8 +54,8 @@ if (command === "help" || command === "--help" || command === "-h") {
 
 if (command === "launch") {
   const { launchBrowser } = require("./launcher");
-  const browserType = remainingArgs.includes("--edge") ? "edge" : remainingArgs.includes("--chrome") ? "chrome" : null;
-  launchBrowser({ browserType }).then(() => {
+  const browserType = remainingArgs.includes("--edge") ? "edge" : remainingArgs.includes("--chrome") ? "chrome" : null;\n  const visible = remainingArgs.includes("--visible");\n  launchBrowser({ browserType, visible })
+  
     console.log("[✓] 浏览器已在后台启动！");
   }).catch((err) => {
     console.error(`[✗] 启动失败: ${err.message}`);
@@ -75,3 +75,4 @@ if (command === "launch") {
   printHelp();
   process.exit(1);
 }
+

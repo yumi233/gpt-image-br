@@ -10,7 +10,7 @@ async function main() {
   let browser;
   try {
     console.log("\n[1/3] 正在启动或连接专属浏览器...");
-    browser = await connectBrowser({ autoLaunch: true });
+    browser = await connectBrowser({ autoLaunch: true, visible: true });
 
     console.log("[2/3] 正在打开 ChatGPT 并检测登录状态...");
     const page = await getChatGPTPage(browser);
@@ -49,3 +49,4 @@ async function main() {
 }
 
 main();
+

@@ -41,6 +41,8 @@ function isPortListening(port = CDP_PORT, host = "127.0.0.1", timeoutMs = 1000) 
 
 /**
  * 启动带持久化 Profile 与防检测参数的浏览器
+ * @param {Object} options
+ * @param {boolean} options.silent - 是否静默后台运行（默认 true：窗口移出屏幕不可视，无感调用）
  */
 async function launchBrowser(options = {}) {
   const browserType = options.browserType || null;
@@ -48,6 +50,8 @@ async function launchBrowser(options = {}) {
   const port = options.port || CDP_PORT;
   const targetUrl = options.targetUrl || CHATGPT_URL;
   const waitReady = options.waitReady !== false;
+  // 默认静默后台运行，除非显式指定 visible = true (如 login 流程)
+  const silent = options.visible ? false : (options.silent !== false);
 
   const browserInfo = findBrowserExecutable(browserType);
   if (!browserInfo) {
@@ -58,23 +62,29 @@ async function launchBrowser(options = {}) {
     fs.mkdirSync(profileDir, { recursive: true });
   }
 
-  console.log(`[启动器] 选用浏览器: ${browserInfo.name} (${browserInfo.path})`);
+  const windowArgs = silent
+    ? ['"--window-position=-32000,-32000"', '"--window-size=1920,1080"']
+    : ['"--start-maximized"'];
+
+  const modeText = silent ? "无感静默后台模式" : "可视窗口模式";
+  console.log(`[启动器] 选用浏览器: ${browserInfo.name} (${modeText})`);
   console.log(`[启动器] 专属持久化 Profile 目录: ${profileDir}`);
   console.log(`[启动器] 调试端口: ${port}`);
 
   if (process.platform === "win32") {
-    // Windows 下使用 PowerShell Start-Process 最稳定，避免 Node spawn 子进程句柄断连问题
-    const psCmd = `Start-Process "${browserInfo.path}" -ArgumentList @(` +
-      `"--remote-debugging-port=${port}", ` +
-      `"--user-data-dir=${profileDir}", ` +
-      `"--profile-directory=Default", ` +
-      `"--disable-blink-features=AutomationControlled", ` +
-      `"--no-first-run", ` +
-      `"--no-default-browser-check", ` +
-      `"--restore-last-session", ` +
-      `"${targetUrl}"` +
-      `)`;
+    const argList = [
+      `"--remote-debugging-port=${port}"`,
+      `"--user-data-dir=${profileDir}"`,
+      `"--profile-directory=Default"`,
+      `"--disable-blink-features=AutomationControlled"`,
+      `"--no-first-run"`,
+      `"--no-default-browser-check"`,
+      `"--restore-last-session"`,
+      ...windowArgs,
+      `"${targetUrl}"`
+    ].join(", ");
 
+    const psCmd = `Start-Process "${browserInfo.path}" -ArgumentList @(${argList})`;
     exec(`powershell -NoProfile -Command "${psCmd.replace(/"/g, '\\"')}"`);
   } else {
     const args = [
@@ -85,6 +95,7 @@ async function launchBrowser(options = {}) {
       "--no-first-run",
       "--no-default-browser-check",
       "--restore-last-session",
+      ...(silent ? ["--window-position=-32000,-32000", "--window-size=1920,1080"] : ["--start-maximized"]),
       targetUrl
     ];
 
@@ -96,25 +107,22 @@ async function launchBrowser(options = {}) {
   }
 
   if (waitReady) {
-    console.log("[启动器] 正在等待浏览器调试端口就绪...");
     const maxWait = 20000;
     const start = Date.now();
     while (Date.now() - start < maxWait) {
       const open = await isPortListening(port);
       if (open) {
-        console.log(`[启动器] 调试端口 (${port}) 已成功就绪！`);
-        return { success: true, browser: browserInfo, profileDir, port };
+        return { success: true, browser: browserInfo, profileDir, port, silent };
       }
       await new Promise((r) => setTimeout(r, 500));
     }
-    console.warn(`[启动器警告] 端口 ${port} 未能在 20 秒内响应，但浏览器进程已发起。`);
   }
 
-  return { success: true, browser: browserInfo, profileDir, port };
+  return { success: true, browser: browserInfo, profileDir, port, silent };
 }
 
 /**
- * 确保浏览器正在运行（若未启动则自动启动）
+ * 确保浏览器正在运行（若未启动则以静默无感模式启动）
  */
 async function ensureBrowserRunning(options = {}) {
   const port = options.port || CDP_PORT;
@@ -124,7 +132,6 @@ async function ensureBrowserRunning(options = {}) {
     return { alreadyRunning: true, port };
   }
 
-  console.log(`[启动器] 检测到调试端口 (${port}) 未启动，正在为您自动启动浏览器...`);
   return await launchBrowser(options);
 }
 
