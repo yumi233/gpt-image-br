@@ -9,9 +9,6 @@ const {
   findBrowserExecutable
 } = require("./config");
 
-/**
- * 检查指定端口是否已在监听
- */
 function isPortListening(port = CDP_PORT, host = "127.0.0.1", timeoutMs = 1000) {
   return new Promise((resolve) => {
     const socket = new net.Socket();
@@ -40,9 +37,37 @@ function isPortListening(port = CDP_PORT, host = "127.0.0.1", timeoutMs = 1000) 
 }
 
 /**
- * 启动带持久化 Profile 与防检测参数的浏览器
- * @param {Object} options
- * @param {boolean} options.silent - 是否静默后台运行（默认 true：窗口移出屏幕不可视，无感调用）
+ * 隐藏后台浏览器的桌面窗口与任务栏图标 (SW_HIDE)
+ */
+function hideBrowserWindowOnWindows(port = CDP_PORT) {
+  if (process.platform !== "win32") return;
+
+  const psScript = `
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32 {
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@
+Start-Sleep -Milliseconds 800
+$conns = Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue
+if ($conns) {
+    $pids = $conns | Select-Object -ExpandProperty OwningProcess -Unique
+    foreach ($pidNum in $pids) {
+        $p = Get-Process -Id $pidNum -ErrorAction SilentlyContinue
+        if ($p -and $p.MainWindowHandle -ne 0) {
+            [Win32]::ShowWindow($p.MainWindowHandle, 0)
+        }
+    }
+}
+`;
+  exec(`powershell -NoProfile -NonInteractive -Command "${psScript.replace(/"/g, '\\"')}"`);
+}
+
+/**
+ * 启动浏览器（支持 0 任务栏图标的无感静默后台模式）
  */
 async function launchBrowser(options = {}) {
   const browserType = options.browserType || null;
@@ -50,7 +75,6 @@ async function launchBrowser(options = {}) {
   const port = options.port || CDP_PORT;
   const targetUrl = options.targetUrl || CHATGPT_URL;
   const waitReady = options.waitReady !== false;
-  // 默认静默后台运行，除非显式指定 visible = true (如 login 流程)
   const silent = options.visible ? false : (options.silent !== false);
 
   const browserInfo = findBrowserExecutable(browserType);
@@ -62,49 +86,37 @@ async function launchBrowser(options = {}) {
     fs.mkdirSync(profileDir, { recursive: true });
   }
 
-  const windowArgs = silent
-    ? ['"--window-position=-32000,-32000"', '"--window-size=1920,1080"']
-    : ['"--start-maximized"'];
-
-  const modeText = silent ? "无感静默后台模式" : "可视窗口模式";
+  const modeText = silent ? "无感静默后台模式 (0 任务栏图标)" : "可视桌面窗口模式";
   console.log(`[启动器] 选用浏览器: ${browserInfo.name} (${modeText})`);
   console.log(`[启动器] 专属持久化 Profile 目录: ${profileDir}`);
   console.log(`[启动器] 调试端口: ${port}`);
 
-  if (process.platform === "win32") {
-    const argList = [
-      `"--remote-debugging-port=${port}"`,
-      `"--user-data-dir=${profileDir}"`,
-      `"--profile-directory=Default"`,
-      `"--disable-blink-features=AutomationControlled"`,
-      `"--no-first-run"`,
-      `"--no-default-browser-check"`,
-      `"--restore-last-session"`,
-      ...windowArgs,
-      `"${targetUrl}"`
-    ].join(", ");
+  const chromeArgs = [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${profileDir}`,
+    "--profile-directory=Default",
+    "--disable-blink-features=AutomationControlled",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--restore-last-session"
+  ];
 
-    const psCmd = `Start-Process "${browserInfo.path}" -ArgumentList @(${argList})`;
-    exec(`powershell -NoProfile -Command "${psCmd.replace(/"/g, '\\"')}"`);
+  if (silent) {
+    chromeArgs.push("--window-position=-32000,-32000", "--window-size=1920,1080");
   } else {
-    const args = [
-      `--remote-debugging-port=${port}`,
-      `--user-data-dir=${profileDir}`,
-      "--profile-directory=Default",
-      "--disable-blink-features=AutomationControlled",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--restore-last-session",
-      ...(silent ? ["--window-position=-32000,-32000", "--window-size=1920,1080"] : ["--start-maximized"]),
-      targetUrl
-    ];
-
-    const child = spawn(browserInfo.path, args, {
-      detached: true,
-      stdio: "ignore"
-    });
-    child.unref();
+    chromeArgs.push("--start-maximized");
   }
+
+  chromeArgs.push(targetUrl);
+
+  const psArgList = chromeArgs.map((a) => `"${a}"`).join(", ");
+  const psCmd = `Start-Process "${browserInfo.path}" -ArgumentList @(${psArgList}) -PassThru | Out-Null`;
+
+  spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", psCmd], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true
+  }).unref();
 
   if (waitReady) {
     const maxWait = 20000;
@@ -112,18 +124,22 @@ async function launchBrowser(options = {}) {
     while (Date.now() - start < maxWait) {
       const open = await isPortListening(port);
       if (open) {
+        if (silent) {
+          hideBrowserWindowOnWindows(port);
+        }
         return { success: true, browser: browserInfo, profileDir, port, silent };
       }
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 600));
     }
+  }
+
+  if (silent) {
+    hideBrowserWindowOnWindows(port);
   }
 
   return { success: true, browser: browserInfo, profileDir, port, silent };
 }
 
-/**
- * 确保浏览器正在运行（若未启动则以静默无感模式启动）
- */
 async function ensureBrowserRunning(options = {}) {
   const port = options.port || CDP_PORT;
   const isListening = await isPortListening(port);
@@ -138,5 +154,6 @@ async function ensureBrowserRunning(options = {}) {
 module.exports = {
   isPortListening,
   launchBrowser,
-  ensureBrowserRunning
+  ensureBrowserRunning,
+  hideBrowserWindowOnWindows
 };
